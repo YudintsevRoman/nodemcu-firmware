@@ -13,7 +13,7 @@
 #include "c_types.h"
 #include "user_interface.h"
 #include "wifi_common.h"
-
+#include "wpa2_enterprise.h"
 
 #ifdef WIFI_SMART_ENABLE
 #include "smart.h"
@@ -745,18 +745,37 @@ static int wifi_station_clear_config ( lua_State* L )
   return 1;  
 }
 
+
+// for clear wpa2 credentials
+void wifi_event_handle_wpa2_event_cb(System_Event_t *evt)
+{
+  switch (evt->event) {
+    case EVENT_STAMODE_CONNECTED:
+    case EVENT_STAMODE_DISCONNECTED:
+      os_printf("clear wpa2 credentials");
+      wifi_station_clear_enterprise_username();
+      wifi_station_clear_enterprise_password();
+    break;
+    default:
+    break;
+  }
+}
+
 // Lua: wifi.sta.config()
 static int wifi_station_config( lua_State* L )
 {
   struct station_config sta_conf;
+  uint8 wpa2_login[64];
   bool auto_connect=true;
   bool save_to_flash=true;
+  bool is_wpa2=false;
   size_t sl, pl, ml;
 
   memset(sta_conf.ssid, 0, sizeof(sta_conf.ssid));
   memset(sta_conf.password, 0, sizeof(sta_conf.password));
   memset(sta_conf.bssid, 0, sizeof(sta_conf.bssid));
   sta_conf.bssid_set=0;
+  memset(wpa2_login, 0, sizeof(wpa2_login));
 
   if(lua_istable(L, 1))
   {
@@ -796,6 +815,42 @@ static int wifi_station_config( lua_State* L )
     }
     lua_pop(L, 1);
 
+    lua_getfield(L, 1, "wpa2");
+      if (!lua_isnil(L, -1))
+      {
+        if (lua_isboolean(L, -1))
+        {
+          is_wpa2=lua_toboolean(L, -1);
+        }
+        else
+        {
+          return luaL_argerror(L, 1, "wpa2:not boolean");
+        }
+      }
+      else
+      {
+        is_wpa2=false;
+      }
+    lua_pop(L, 1);
+    if (is_wpa2)
+    {
+      lua_getfield(L, 1, "login");
+        if (!lua_isnil(L, -1))
+        {
+          if( lua_isstring(L, -1) )
+          {
+            const char *lgn = luaL_checklstring( L, -1, &pl );
+            luaL_argcheck(L, ((pl>=0 && pl<=sizeof(wpa2_login)) ), 1, "login: length:0-64");
+            memcpy(wpa2_login, lgn, pl);
+          }
+          else
+          {
+            return luaL_argerror( L, 1, "login:not string" );
+          }
+        }
+      lua_pop(L, 1);
+    }
+
     lua_getfield(L, 1, "bssid");
     if (!lua_isnil(L, -1))
     {
@@ -827,23 +882,30 @@ static int wifi_station_config( lua_State* L )
     }
     lua_pop(L, 1);
 
-    lua_getfield(L, 1, "save");
-    if (!lua_isnil(L, -1))
+    if (is_wpa2)
     {
-      if (lua_isboolean(L, -1)) 
-      {
-        save_to_flash=lua_toboolean(L, -1);
-      }
-      else 
-      {
-        return luaL_argerror(L, 1, "save:not boolean");
-      }
+      save_to_flash=false;
     }
-    else 
+    else
     {
-      save_to_flash=true;
+      lua_getfield(L, 1, "save");
+      if (!lua_isnil(L, -1))
+      {
+        if (lua_isboolean(L, -1))
+        {
+          save_to_flash=lua_toboolean(L, -1);
+        }
+        else
+        {
+          return luaL_argerror(L, 1, "save:not boolean");
+        }
+      }
+      else
+      {
+        save_to_flash=true;
+      }
+      lua_pop(L, 1);
     }
-    lua_pop(L, 1);
 
 #ifdef WIFI_SDK_EVENT_MONITOR_ENABLE
 
@@ -957,8 +1019,14 @@ static int wifi_station_config( lua_State* L )
   memset(debug_temp, 0, sizeof(debug_temp));
   memcpy(debug_temp, sta_conf.password, sizeof(sta_conf.password));
   WIFI_DBG("\tsta_conf.password=\"%s\" len=%d\n", debug_temp, pl);
+
+  memset(debug_temp, 0, sizeof(debug_temp));
+  memcpy(debug_temp, wpa2_login, sizeof(wpa2_login));
+  WIFI_DBG("\twpa2_login=\"%s\" len=%d\n", debug_temp, pl);
+
   WIFI_DBG("\tsta_conf.bssid=\""MACSTR"\"\tbssid_set=%d\n", MAC2STR(sta_conf.bssid), sta_conf.bssid_set);
   WIFI_DBG("\tsave_to_flash=%s\n", save_to_flash ? "true":"false");
+  WIFI_DBG("\tis_wpa2=%s\n", is_wpa2 ? "true":"false");
 #endif
 
   wifi_station_disconnect();
@@ -973,8 +1041,19 @@ static int wifi_station_config( lua_State* L )
     config_success = wifi_station_set_config_current(&sta_conf);
   }
 
-  wifi_station_set_auto_connect((uint8)auto_connect);
-  if(auto_connect) 
+  if(is_wpa2)
+  {
+    wifi_set_event_handler_cb(wifi_event_handle_wpa2_event_cb);
+    wifi_station_set_wpa2_enterprise_auth(1);
+    wifi_station_set_enterprise_username(wpa2_login, sizeof(wpa2_login));
+    wifi_station_set_enterprise_password(sta_conf.password, sizeof(sta_conf.password));
+    wifi_station_set_auto_connect((uint8)0);
+  }
+  else
+  {
+    wifi_station_set_auto_connect((uint8)auto_connect);
+  }
+  if(auto_connect)
   {
     wifi_station_connect();
   }

@@ -120,6 +120,7 @@ SECTIONS
     /* *liblwip_536.a:*(.literal .text) - source-based library used instead */
     /* *libpwm.a:*(.literal .text) - our own implementation used instead */
     /* *libwpa.a:*(.literal .text) - tested that safe to keep in iROM */
+    /* *libwpa2.a:*(.literal .text) - tested that safe to keep in iROM */
     /* *libwps.a:*(.literal .text) - tested that safe to keep in iROM */
 
     *(.iram.text .iram0.text)
